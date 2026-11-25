@@ -1,0 +1,33 @@
+# Текстовые файлы хранятся с LF, на Windows выдаются с CRLF
+* text=auto
+
+*.c       text
+*.h       text
+*.ini     text
+*.py      text
+*.md      text
+*.html    text
+*.json    text
+
+# Altium Designer: двоичные документы
+*.SchDoc  binary
+*.PcbDoc  binary
+*.SchLib  binary
+*.PcbLib  binary
+*.IntLib  binary
+*.PrjPcb  text eol=crlf
+*.OutJob  text eol=crlf
+
+# Gerber и сверловка — текст, но сравнивать построчно бессмысленно
+hardware/gerber/** -diff
+
+# Прочие двоичные
+*.pdf     binary
+*.png     binary
+*.jpg     binary
+*.pptx    binary
+*.docx    binary
+*.xlsx    binary
+*.zip     binary
+*.step    binary
+*.STEP    binary

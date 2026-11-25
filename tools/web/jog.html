@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пульт 6 осей</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1d2129;--muted:#6b7280;--line:#e3e5e9;--acc:#2563eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--btn:#eef1f5}
+@media (prefers-color-scheme:dark){:root{--bg:#15171b;--card:#1e2126;--text:#e7e9ee;--muted:#9aa2ae;--line:#2c3036;--acc:#4f8bff;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--btn:#2a2e35}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,Segoe UI,Arial,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button{font:inherit;border:1px solid var(--line);background:var(--btn);color:var(--text);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover{filter:brightness(.97)}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.stop{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:700;padding:10px 22px}
+select,input[type=number]{font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+label{color:var(--muted)}
+#status{font-family:ui-monospace,Consolas,monospace;font-size:14px}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-weight:600;font-size:13px;background:var(--btn)}
+.pill.Off{color:var(--muted)} .pill.Idle{color:var(--ok)} .pill.Run{color:var(--acc)} .pill.Alarm{color:#fff;background:var(--bad)}
+#alarm{display:none;background:var(--bad);color:#fff;border-radius:8px;padding:8px 12px;margin-top:8px}
+table{width:100%;border-collapse:collapse}
+td{padding:8px 4px;border-top:1px solid var(--line);vertical-align:middle}
+tr:first-child td{border-top:none}
+td.ax{font-weight:700;width:64px}
+td.pos{font-family:ui-monospace,Consolas,monospace;width:210px;white-space:nowrap;color:var(--muted)}
+.jog{min-width:96px}
+.lim{font-size:12px;padding:1px 6px;border-radius:6px;background:var(--warn);color:#fff;display:none}
+#log{height:120px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted);white-space:pre-wrap}
+.hint{color:var(--muted);font-size:13px}
+ol.steps{margin:4px 0 8px;padding-left:20px}
+table.roles td{padding:4px 4px}
+table.roles td.ax{width:64px}
+#dInfo b{color:var(--text)}
+@media (max-width:560px){td.pos{width:auto}.jog{min-width:70px}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Пульт 6 осей — плата на MIK32</h1>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect" class="primary">Подключиться</button>
+      <button id="en" disabled>Включить драйверы (E)</button>
+      <button id="dis" disabled>Выключить (D)</button>
+      <button id="clr" disabled>Сброс аварии (X)</button>
+      <span style="flex:1"></span>
+      <button id="stop" class="stop" disabled>СТОП</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="pill Off" id="mode">нет связи</span>
+      <span id="status"></span>
+    </div>
+    <div id="alarm"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <label>Шагов на оборот
+        <select id="spr">
+          <option value="3200" selected>3200 — 1/16: A4988 MS1+MS2+MS3 / TMC MS1+MS2</option>
+          <option value="1600">1600 — 1/8: A4988 MS1+MS2 / TMC без перемычек</option>
+          <option value="800">800 — 1/4: A4988 только MS2</option>
+          <option value="400">400 — 1/2: A4988 только MS1</option>
+          <option value="200">200 — полный шаг: A4988 без перемычек</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Ход за нажатие
+        <select id="step">
+          <option value="0.0625">1/16 оборота</option>
+          <option value="0.125">1/8 оборота</option>
+          <option value="0.25" selected>1/4 оборота</option>
+          <option value="0.5">1/2 оборота</option>
+          <option value="1">1 оборот</option>
+          <option value="2">2 оборота</option>
+        </select>
+      </label>
+      <label>Скорость, об/с <input id="speed" type="number" min="0.1" max="5" step="0.1" value="1" style="width:80px"></label>
+      <label>Разгон
+        <select id="accel">
+          <option value="smooth" selected>плавный</option>
+          <option value="none">без разгона (как команда в консоли)</option>
+        </select>
+      </label>
+    </div>
+    <div class="hint" style="margin-top:6px">«Без разгона» — одна команда на нажатие, звук ровный, но под нагрузкой мотор может сорваться на старте: тогда уменьшите скорость или верните плавный разгон.</div>
+    <div class="hint" style="margin-top:4px">Отметьте «вместе», чтобы оси двигались одновременно. Два мотора одной оси (у вас Z) двигайте только вместе — по одному перекосит портал.</div>
+  </div>
+
+  <div class="card">
+    <table id="axes"></table>
+  </div>
+
+  <div class="card" id="demo">
+    <div class="row" style="margin-bottom:4px"><b>Демо: круг по Y и Z, стол в такт</b></div>
+    <ol class="hint steps">
+      <li>Назначьте моторам роли. Два мотора Z — обоим роль «Z».</li>
+      <li>Проверьте направления кнопками ниже (сначала 1 мм).</li>
+      <li>Пультом выше поставьте голову в середину свободного места: по Z — выше стола больше чем на радиус. Нажмите «Центр здесь».</li>
+      <li>«Проверить габарит» — медленно доедет до краёв круга и вернётся. Если что-то близко — СТОП (Esc) и уменьшите радиус.</li>
+      <li>«▶ Круг».</li>
+    </ol>
+
+    <table id="roles" class="roles"></table>
+
+    <div class="row" style="margin-top:8px">
+      <label>Y, мм за оборот <input id="mmY" type="number" value="40" min="0.1" step="0.1" style="width:76px"></label>
+      <label>Z, мм за оборот <input id="mmZ" type="number" value="8" min="0.1" step="0.1" style="width:76px"></label>
+      <label>Стол, мм за оборот <input id="mmT" type="number" value="40" min="0.1" step="0.1" style="width:76px"></label>
+    </div>
+    <div class="hint">Ремень GT2 со шкивом 20 зубьев — 40 мм, 16 зубьев — 32 мм; винт T8 — 8 мм; винт TR8×2 — 2 мм; шпилька M5 — 0,8 мм.
+      Шагов на оборот берутся из настройки выше — у всех драйверов должны стоять одинаковые перемычки MS.</div>
+
+    <div class="row" style="margin-top:10px">
+      <span>Проверка:</span>
+      <select id="tdist"><option value="1" selected>1 мм</option><option value="5">5 мм</option><option value="10">10 мм</option></select>
+      <button class="dbtn tst" data-r="Y" data-d="-1" disabled>Y −</button><button class="dbtn tst" data-r="Y" data-d="1" disabled>Y +</button>
+      <button class="dbtn tst" data-r="Z" data-d="-1" disabled>Z −</button><button class="dbtn tst" data-r="Z" data-d="1" disabled>Z +</button>
+      <button class="dbtn tst" data-r="T" data-d="-1" disabled>Стол −</button><button class="dbtn tst" data-r="T" data-d="1" disabled>Стол +</button>
+    </div>
+    <div class="hint">Оба мотора Z должны поднимать портал ровно. Если один крутится навстречу — сразу СТОП и отметьте ему «инверт».
+      «Z +» должно поднимать голову. На 10 мм проверьте линейкой, что «мм за оборот» верные.</div>
+
+    <div class="row" style="margin-top:10px">
+      <label>Радиус, мм <input id="R" type="number" value="5" min="1" max="50" step="1" style="width:64px"></label>
+      <label>Стол ±, мм <input id="A" type="number" value="5" min="0" max="50" step="1" style="width:64px"></label>
+      <label>Стол <select id="ph">
+        <option value="cy" selected>в такт с Y</option><option value="sz">в такт с Z</option>
+        <option value="ny">навстречу Y</option><option value="no">стоит</option></select></label>
+      <label>Круг за, с <input id="per" type="number" value="8" min="1" step="0.5" style="width:64px"></label>
+      <label>Кругов <input id="loops" type="number" value="3" min="1" max="50" step="1" style="width:56px"></label>
+      <label>Не быстрее, мм/с <input id="vmax" type="number" value="10" min="1" max="60" step="1" style="width:56px"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="dbtn" id="dCenter" disabled>Центр здесь</button>
+      <button class="dbtn" id="dCheck" disabled>Проверить габарит</button>
+      <button class="dbtn primary" id="dRun" disabled>▶ Круг</button>
+      <button class="dbtn" id="dHome" disabled>Вернуться в центр</button>
+    </div>
+    <div class="hint" id="dInfo" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:6px"><b>Обмен с платой</b><span style="flex:1"></span>
+      <input id="raw" placeholder="своя команда, например M 100 0 0 0 0 0 500" style="flex:2;min-width:200px;font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text)">
+      <button id="send" disabled>Отправить</button>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <div class="hint">Работает в Chrome или Edge на компьютере. Монитор в VS Code перед подключением закройте — COM-порт может занимать только одна программа.
+  Перед первым включением моторов: каретки в середину хода, ток драйверов поменьше.</div>
+</main>
+
+<script>
+const DT = 50;               // мс на один отрезок движения (длиннее — меньше зависим от задержек USB)
+const MAX_INFLIGHT = 220;    // байт команд «в пути» без «ok» (приёмный буфер платы — 256 байт)
+const ACC_DT = 20;           // мс на отрезок при разгоне/торможении кнопками — мельче ступеньки скорости
+let stopUntil = 0;           // после СТОП какое-то время игнорируем запоздалые ответы
+const qTimes = [], rtts = []; // время запросов «?» и задержки ответа на них (мс)
+function askStatus(){ qTimes.push(performance.now()); if (qTimes.length > 20) qTimes.shift(); return writeRaw("?"); }
+const $ = id => document.getElementById(id);
+let port, reader, writer, buf = "", waiters = [], busy = false, poll = null, lastPos = [0,0,0,0,0,0];
+
+// ---------- таблица осей ----------
+const tbl = $("axes");
+for (let a = 1; a <= 6; a++) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td class="ax">Ось ${a}</td>
+    <td><button class="jog" data-ax="${a}" data-dir="-1" disabled>◀ назад</button></td>
+    <td><button class="jog" data-ax="${a}" data-dir="1" disabled>вперёд ▶</button></td>
+    <td class="pos" id="pos${a}">—</td>
+    <td><span class="lim" id="lim${a}">концевик</span></td>
+    <td><label><input type="checkbox" id="grp${a}"> вместе</label></td>`;
+  tbl.appendChild(tr);
+}
+
+function log(s){ const L=$("log"); L.textContent += s + "\n"; L.scrollTop = L.scrollHeight; }
+function setConnected(on){
+  for (const b of document.querySelectorAll("button.jog, button.dbtn, #en, #dis, #clr, #stop, #send")) b.disabled = !on;
+  $("connect").textContent = on ? "Отключиться" : "Подключиться";
+}
+
+// ---------- связь ----------
+async function connect(){
+  if (!("serial" in navigator)) { alert("Браузер не поддерживает Web Serial. Откройте страницу в Chrome или Edge."); return; }
+  if (port) { await disconnect(); return; }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+  } catch (e) { log("Не удалось открыть порт: " + e.message); port = null; return; }
+  writer = port.writable.getWriter();
+  setConnected(true);
+  origin = null; showInfo();   // после переподключения центр задаётся заново
+  log("Подключено.");
+  readLoop();
+  // состояние: в покое каждые 0,4 с, во время движения реже — меньше лишнего обмена с платой
+  let lastPoll = 0;
+  poll = setInterval(() => {
+    const now = performance.now();
+    if (port && now - lastPoll >= (busy ? 1000 : 400)) { lastPoll = now; askStatus(); }
+  }, 100);
+}
+async function disconnect(){
+  clearInterval(poll); poll = null;
+  try { await writeRaw("D\n"); } catch(e){}
+  try { reader && await reader.cancel(); } catch(e){}
+  try { writer && writer.releaseLock(); } catch(e){}
+  try { await port.close(); } catch(e){}
+  port = null; setConnected(false);
+  $("mode").className = "pill Off"; $("mode").textContent = "нет связи"; $("status").textContent = "";
+  log("Отключено.");
+}
+async function writeRaw(s){ if (writer) await writer.write(new TextEncoder().encode(s)); }
+
+async function readLoop(){
+  const dec = new TextDecoder();
+  while (port && port.readable) {
+    reader = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value);
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) onLine(line); }
+        // строка состояния приходит без перевода строки в начале — ловим и её
+        const s = buf.indexOf("<"), e = buf.indexOf(">", s);
+        if (s >= 0 && e > s) { onStatus(buf.slice(s, e + 1)); buf = buf.slice(0, s) + buf.slice(e + 1); }
+      }
+    } catch (e) { log("Ошибка чтения: " + e.message); break; }
+    finally { reader.releaseLock(); }
+  }
+}
+
+function onLine(line){
+  const s = line.indexOf("<");
+  if (s >= 0 && line.indexOf(">", s) > s) { onStatus(line.slice(s, line.indexOf(">", s) + 1)); line = (line.slice(0, s) + line.slice(line.indexOf(">", s) + 1)).trim(); if (!line) return; }
+  if (line === "ok" || line.startsWith("error")) {
+    if (performance.now() < stopUntil) return;   // ответы на строки, отправленные до СТОП
+    const w = waiters.shift(); if (w) w(line); if (line.startsWith("error")) log(line); return;
+  }
+  if (line === "HALT") return;
+  if (line.startsWith("ALARM")) { showAlarm(line); log(line); return; }
+  log(line);
+}
+
+function onStatus(st){
+  if (qTimes.length) { rtts.push(performance.now() - qTimes.shift()); if (rtts.length > 10) rtts.shift(); }
+  // <Idle|POS:1,2,3,4,5,6|Q:0|LIM:000000|EN:1|ALARM:...>
+  const parts = st.slice(1, -1).split("|");
+  const mode = parts[0];
+  const m = $("mode"); m.className = "pill " + mode;
+  m.textContent = { Off: "драйверы выключены", Idle: "стоит", Run: "едет", Alarm: "АВАРИЯ" }[mode] || mode;
+  const kv = {}; for (const p of parts.slice(1)) { const k = p.indexOf(":"); kv[p.slice(0, k)] = p.slice(k + 1); }
+  if (kv.POS) {
+    lastPos = kv.POS.split(",").map(Number);
+    const spr = +$("spr").value;
+    lastPos.forEach((v, i) => $("pos" + (i + 1)).textContent = `${v} шаг (${(v / spr).toFixed(2)} об)`);
+  }
+  if (kv.LIM) [...kv.LIM].forEach((c, i) => $("lim" + (i + 1)).style.display = c === "1" ? "inline-block" : "none");
+  const rtt = rtts.length ? ` · ответ платы ~${Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length)} мс (макс ${Math.round(Math.max(...rtts))})` : "";
+  $("status").textContent = `очередь ${kv.Q ?? "-"} · драйверы ${kv.EN === "1" ? "вкл" : "выкл"}${rtt}`;
+  if (mode !== "Alarm") $("alarm").style.display = "none";
+  else if (kv.ALARM) showAlarm("ALARM: " + kv.ALARM);
+}
+function showAlarm(t){ const a = $("alarm"); a.style.display = "block"; a.textContent = t + " — устраните причину, нажмите «Сброс аварии», затем «Включить драйверы»."; }
+
+function cmd(line, timeout = 10000){
+  return new Promise((resolve) => {
+    let done = false;
+    const w = r => { if (!done) { done = true; resolve(r); } };
+    waiters.push(w);
+    writeRaw(line + "\n");
+    setTimeout(() => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); w("error: нет ответа"); }, timeout);
+  });
+}
+
+// ---------- движение с плавным разгоном ----------
+function trapezoid(steps, vmax, acc, dt){
+  const S = Math.abs(steps), sg = Math.sign(steps) || 1;
+  if (!S) return [];
+  let ta = vmax / acc, sa = 0.5 * acc * ta * ta, vpk = vmax, tc;
+  if (2 * sa > S) { ta = Math.sqrt(S / acc); vpk = acc * ta; sa = S / 2; tc = 0; } else tc = (S - 2 * sa) / vmax;
+  const T = 2 * ta + tc;
+  const pos = t => t < ta ? 0.5 * acc * t * t : t < ta + tc ? sa + vpk * (t - ta) : t < T ? S - 0.5 * acc * (T - t) ** 2 : S;
+  const n = Math.max(1, Math.ceil(T / dt)), out = []; let prev = 0;
+  for (let i = 1; i <= n; i++) { const p = Math.round(pos(Math.min(i * dt, T))); out.push(sg * (p - prev)); prev = p; }
+  return out;
+}
+
+// Отправить список отрезков [d1..d6] по DT мс. Держим «в пути» до MAX_INFLIGHT байт без «ok»,
+// чтобы очередь платы (32 отрезка) успевала заполниться даже при медленном USB. true — доехали без остановки.
+function runVectors(vecs){ return runSegs(vecs.map(v => ({ v, t: DT }))); }
+
+// segs: [{ v: [d1..d6], t: мс }]
+async function runSegs(segs){
+  if (busy || !port || performance.now() < stopUntil) return false;
+  busy = true;
+  const inflight = [];
+  let bytes = 0, ok = true;
+  try {
+    outer:
+    for (const s of segs) {
+      const line = `M ${s.v.join(" ")} ${s.t}`, len = line.length + 1;
+      while (inflight.length && bytes + len > MAX_INFLIGHT) {
+        const f = inflight.shift(); bytes -= f.len;
+        const r = await f.p;
+        if (r !== "ok") { if (busy) log(`Остановлено: ${r}`); ok = false; busy = false; break outer; }
+      }
+      if (!busy) { ok = false; break; } // нажали СТОП
+      inflight.push({ p: cmd(line), len }); bytes += len;
+    }
+    for (const f of inflight) { const r = await f.p; if (r !== "ok" && ok) { if (busy) log(`Остановлено: ${r}`); ok = false; } }
+  } finally { busy = false; }
+  return ok;
+}
+
+async function jog(ax, dir){
+  if (busy || !port) return;
+  const spr = +$("spr").value, rev = +$("step").value, speed = Math.min(5, Math.max(0.1, +$("speed").value || 1));
+  const axes = $("grp" + ax).checked ? [1,2,3,4,5,6].filter(a => $("grp" + a).checked) : [ax];
+  const mk = d => { const v = [0,0,0,0,0,0]; for (const a of axes) v[a - 1] = dir * d; return v; };
+  const S = Math.round(rev * spr), v = speed * spr;
+  if (!S) return;
+  if ($("accel").value === "none") {
+    // одна команда — ровно как из консоли
+    await runSegs([{ v: mk(S), t: Math.max(1, Math.round(S / v * 1000)) }]);
+    return;
+  }
+  // плавно: разгон и торможение отрезками по ACC_DT мс, ровный участок — одной командой
+  const acc = 2 * v;                                   // разгон до скорости за 0,5 с
+  let ta = v / acc, vpk = v;
+  if (acc * ta * ta > S) { ta = Math.sqrt(S / acc); vpk = acc * ta; } // не успевает разогнаться
+  const up = [];                                       // [{шаги, мс}]
+  let prevP = 0, prevT = 0;
+  const n = Math.max(1, Math.ceil(ta * 1000 / ACC_DT));
+  for (let k = 1; k <= n; k++) {
+    const t = Math.min(k * ACC_DT / 1000, ta);
+    const p = Math.min(Math.floor(S / 2), Math.round(0.5 * acc * t * t));
+    const ms = Math.max(1, Math.round((t - prevT) * 1000));
+    up.push({ d: p - prevP, ms }); prevP = p; prevT = t;
+  }
+  const upSteps = prevP, cruise = S - 2 * upSteps;
+  const segs = [{ v: [0,0,0,0,0,0], t: 100 }];         // 0,1 с паузы: пульт успевает заполнить очередь платы
+  for (const u of up) segs.push({ v: mk(u.d), t: u.ms });
+  if (cruise > 0) segs.push({ v: mk(cruise), t: Math.max(1, Math.round(cruise / vpk * 1000)) });
+  for (const u of up.slice().reverse()) segs.push({ v: mk(u.d), t: u.ms });
+  await runSegs(segs);
+}
+
+// ---------- демо: круг по Y–Z, стол в такт ----------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let origin = null;             // положения осей (в шагах) в точке «Центр здесь»
+const rtbl = $("roles");
+for (let a = 1; a <= 6; a++) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td class="ax">Ось ${a}</td>
+    <td><select id="role${a}"><option value="">— не участвует</option><option value="Y">Y</option><option value="Z">Z</option><option value="T">Стол</option></select></td>
+    <td><label><input type="checkbox" id="inv${a}"> инверт</label></td>`;
+  rtbl.appendChild(tr);
+}
+const SAVE_IDS = ["spr", "accel", "speed", "step", "mmY", "mmZ", "mmT", "R", "A", "ph", "per", "loops", "vmax", "tdist"]
+  .concat([1,2,3,4,5,6].flatMap(a => ["role" + a, "inv" + a]));
+function saveCfg(){
+  try { const o = {}; for (const id of SAVE_IDS) { const e = $(id); o[id] = e.type === "checkbox" ? e.checked : e.value; }
+        localStorage.setItem("jog6demo", JSON.stringify(o)); } catch (e) {}
+}
+function loadCfg(){
+  try { const o = JSON.parse(localStorage.getItem("jog6demo") || "{}");
+        for (const id in o) { const e = $(id); if (!e) continue; if (e.type === "checkbox") e.checked = !!o[id]; else e.value = o[id]; } } catch (e) {}
+}
+
+function demoCfg(){
+  const spr = +$("spr").value;
+  const mm = { Y: +$("mmY").value, Z: +$("mmZ").value, T: +$("mmT").value };
+  const spm = {}; for (const r of ["Y", "Z", "T"]) spm[r] = mm[r] > 0 ? spr / mm[r] : 0;   // шагов на мм
+  const map = [1,2,3,4,5,6].map(a => ({ role: $("role" + a).value, sign: $("inv" + a).checked ? -1 : 1 }));
+  const num = (id, lo, hi, d) => { const v = +$(id).value; return isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  return { spr, spm, map, R: num("R", 1, 50, 5), A: num("A", 0, 50, 5), ph: $("ph").value,
+           per: num("per", 1, 120, 8), loops: Math.round(num("loops", 1, 50, 3)), vmax: num("vmax", 1, 60, 10),
+           noAccel: $("accel").value === "none" };
+}
+const roleUsed = (cfg, r) => cfg.map.some(m => m.role === r);
+const tableG = (ph, th) => ph === "cy" ? Math.cos(th) : ph === "sz" ? Math.sin(th) : ph === "ny" ? -Math.cos(th) : 0;
+
+// доли пути 0…1 в конце каждого отрезка: разгон a, скорость v, торможение a
+function fracs(L, v, a){
+  if (!(L > 1e-9)) return [];
+  let ta = v / a, sa = 0.5 * a * ta * ta, vpk = v, tc;
+  if (2 * sa > L) { ta = Math.sqrt(L / a); vpk = a * ta; sa = L / 2; tc = 0; } else tc = (L - 2 * sa) / v;
+  const T = 2 * ta + tc, dt = DT / 1000;
+  const pos = t => t < ta ? 0.5 * a * t * t : t < ta + tc ? sa + vpk * (t - ta) : t < T ? L - 0.5 * a * (T - t) ** 2 : L;
+  const n = Math.max(1, Math.ceil(T / dt)), out = [];
+  for (let i = 1; i <= n; i++) out.push(pos(Math.min(i * dt, T)) / L);
+  return out;
+}
+function linePts(from, to, v, a){
+  const d = Math.hypot(to.Y - from.Y, to.Z - from.Z, to.T - from.T);
+  return fracs(d, v, a).map(f => ({ Y: from.Y + (to.Y - from.Y) * f, Z: from.Z + (to.Z - from.Z) * f, T: from.T + (to.T - from.T) * f }));
+}
+function pausePts(p, sec){ return Array.from({ length: Math.round(sec * 1000 / DT) }, () => ({ ...p })); }
+function circlePlan(cfg){
+  const big = Math.max(cfg.R, cfg.ph === "no" ? 0 : cfg.A);
+  const per = Math.max(cfg.per, 2 * Math.PI * big / cfg.vmax);          // не быстрее vmax
+  const w = 2 * Math.PI / per, TH = 2 * Math.PI * cfg.loops, tr = Math.min(1.5, per / 2);
+  const angAcc = cfg.noAccel ? 1e9 : w / tr;                             // без разгона — сразу с полной скоростью
+  const pts = fracs(TH, w, angAcc).map(f => {
+    const th = f * TH;
+    return { Y: cfg.R * Math.cos(th), Z: cfg.R * Math.sin(th), T: cfg.A * tableG(cfg.ph, th) };
+  });
+  return { per, v: 2 * Math.PI * big / per, pts, start: { Y: cfg.R, Z: 0, T: cfg.A * tableG(cfg.ph, 0) } };
+}
+// точки (мм от центра) -> отрезки в шагах для осей 1…6; считаем от центра, без накопления ошибки
+function toVectors(pts, cfg){
+  const prev = [0,0,0,0,0,0];
+  return pts.map(p => {
+    const v = [0,0,0,0,0,0];
+    cfg.map.forEach((m, i) => { if (!m.role) return; const t = Math.round(p[m.role] * cfg.spm[m.role]) * m.sign; v[i] = t - prev[i]; prev[i] = t; });
+    return v;
+  });
+}
+async function freshPos(){ await askStatus(); await sleep(350); return lastPos.slice(); }
+// из текущего положения обратно в «Центр здесь»
+function homeVectors(cfg, cur){
+  const d = cur.map((p, i) => cfg.map[i].role ? origin[i] - p : 0);
+  let L = 0; d.forEach((x, i) => { const r = cfg.map[i].role; if (r && cfg.spm[r]) L = Math.max(L, Math.abs(x) / cfg.spm[r]); });
+  const prev = [0,0,0,0,0,0];
+  return fracs(L, Math.min(cfg.vmax, 5), 10).map(f => {
+    const v = [0,0,0,0,0,0]; d.forEach((x, i) => { const t = Math.round(x * f); v[i] = t - prev[i]; prev[i] = t; }); return v;
+  });
+}
+function rateOk(vecs){
+  const lim = Math.floor(25000 * DT / 1000 * 0.9);
+  for (const v of vecs) for (let i = 0; i < 6; i++)
+    if (Math.abs(v[i]) > lim) { log(`Слишком быстро для оси ${i + 1}: ${Math.abs(v[i])} шагов за ${DT} мс. Уменьшите скорость.`); return false; }
+  return true;
+}
+function demoReady(cfg, needOrigin = true){
+  const used = ["Y", "Z", "T"].filter(r => roleUsed(cfg, r));
+  if (!used.length) { log("Назначьте моторам роли Y / Z / Стол."); return false; }
+  for (const r of used) if (!(cfg.spm[r] > 0)) { log(`Укажите «мм за оборот» для ${r === "T" ? "стола" : r}.`); return false; }
+  if (needOrigin && !origin) { log("Сначала поставьте голову в середину свободного места и нажмите «Центр здесь»."); return false; }
+  return true;
+}
+function showInfo(){
+  const cfg = demoCfg(), c = circlePlan({ ...cfg, loops: 1 });
+  const lines = [];
+  lines.push(`Круг: радиус <b>${cfg.R} мм</b>, один круг за <b>${c.per.toFixed(1)} с</b>, скорость ${c.v.toFixed(1)} мм/с` +
+             (c.per > cfg.per + 1e-6 ? ` (замедлено до «не быстрее ${cfg.vmax} мм/с»)` : ""));
+  lines.push(`Займёт по Y и Z: от −${cfg.R} до +${cfg.R} мм от центра` + (cfg.ph !== "no" && roleUsed(cfg, "T") ? `, стол ±${cfg.A} мм` : ""));
+  lines.push(origin ? `Центр запомнен: ${origin.join(", ")}` : "Центр не задан");
+  $("dInfo").innerHTML = lines.join("<br>");
+}
+
+async function demoTest(role, dir){
+  const cfg = demoCfg();
+  if (!roleUsed(cfg, role)) { log(`Ни одному мотору не назначена роль «${role === "T" ? "Стол" : role}».`); return; }
+  if (!demoReady(cfg, false)) return;
+  const d = +$("tdist").value * dir, to = { Y: 0, Z: 0, T: 0 }; to[role] = d;
+  const vecs = toVectors(linePts({ Y: 0, Z: 0, T: 0 }, to, 3, 10), cfg);
+  if (rateOk(vecs)) await runVectors(vecs);
+}
+async function demoCheck(){
+  const cfg = demoCfg(); if (!demoReady(cfg)) return;
+  const vecs = homeVectors(cfg, await freshPos());
+  const v = Math.min(cfg.vmax, 3), a = 10, O = { Y: 0, Z: 0, T: 0 };
+  let last = O; const pts = [];
+  const go = p => { pts.push(...linePts(last, p, v, a), ...pausePts(p, 0.4)); last = p; };
+  if (roleUsed(cfg, "Y")) { go({ ...O, Y: cfg.R }); go(O); go({ ...O, Y: -cfg.R }); go(O); }
+  if (roleUsed(cfg, "Z")) { go({ ...O, Z: cfg.R }); go(O); go({ ...O, Z: -cfg.R }); go(O); }
+  if (roleUsed(cfg, "T") && cfg.ph !== "no" && cfg.A > 0) { go({ ...O, T: cfg.A }); go(O); go({ ...O, T: -cfg.A }); go(O); }
+  vecs.push(...toVectors(pts, cfg));
+  if (!rateOk(vecs)) return;
+  log(`Проверка габарита: ±${cfg.R} мм по Y и Z` + (roleUsed(cfg, "T") && cfg.ph !== "no" ? `, стол ±${cfg.A} мм` : "") + ". Esc — стоп.");
+  const ok = await runVectors(vecs);
+  log(ok ? "Габарит в порядке — можно запускать круг." : "Остановлено. «Вернуться в центр» вернёт голову.");
+}
+async function demoRun(){
+  const cfg = demoCfg(); if (!demoReady(cfg)) return;
+  const vecs = homeVectors(cfg, await freshPos());
+  const c = circlePlan(cfg), O = { Y: 0, Z: 0, T: 0 }, vm = Math.min(cfg.vmax, 5);
+  const la = cfg.noAccel ? 1e9 : 10;
+  const pts = [...linePts(O, c.start, vm, la), ...c.pts, ...linePts(c.start, O, vm, la)];
+  vecs.push(...toVectors(pts, cfg));
+  if (!rateOk(vecs)) return;
+  log(`Круг: R=${cfg.R} мм, ${cfg.loops} шт., ${c.per.toFixed(1)} с на круг. Esc — стоп.`);
+  const ok = await runVectors(vecs);
+  log(ok ? "Готово, голова в центре." : "Остановлено. «Вернуться в центр» вернёт голову.");
+}
+async function demoHome(){
+  const cfg = demoCfg(); if (!demoReady(cfg)) return;
+  const vecs = homeVectors(cfg, await freshPos());
+  if (!vecs.length) { log("Уже в центре."); return; }
+  if (rateOk(vecs)) { const ok = await runVectors(vecs); if (ok) log("В центре."); }
+}
+
+loadCfg();
+showInfo();
+document.getElementById("demo").addEventListener("input", () => { saveCfg(); showInfo(); });
+document.getElementById("demo").addEventListener("change", () => { saveCfg(); showInfo(); });
+for (const id of ["spr", "accel", "speed", "step"]) $(id).addEventListener("change", () => { saveCfg(); showInfo(); });
+for (const b of document.querySelectorAll("button.tst")) b.onclick = () => demoTest(b.dataset.r, +b.dataset.d);
+$("dCenter").onclick = async () => {
+  if (busy) return;
+  origin = await freshPos(); log(`Центр запомнен: ${origin.join(", ")}`); showInfo();
+};
+$("dCheck").onclick = demoCheck;
+$("dRun").onclick = demoRun;
+$("dHome").onclick = demoHome;
+
+// ---------- кнопки ----------
+$("connect").onclick = connect;
+$("en").onclick = async () => { const r = await cmd("E"); if (r !== "ok") log(r.includes("E-stop") ? "Нет перемычки/кнопки E-stop на XP8 — драйверы не включатся." : r); };
+$("dis").onclick = () => cmd("D");
+$("clr").onclick = () => cmd("X");
+$("stop").onclick = async () => {
+  busy = false; stopUntil = performance.now() + 600;
+  waiters.splice(0).forEach(w => w("error: стоп"));
+  await writeRaw("!"); log("СТОП");
+  // повторяем: строки, уже лежавшие в буфере платы, она прочитает после первого «!»
+  for (const ms of [60, 150, 350]) setTimeout(() => writeRaw("!"), ms);
+};
+for (const b of document.querySelectorAll("button.jog")) b.onclick = () => jog(+b.dataset.ax, +b.dataset.dir);
+$("send").onclick = async () => { const t = $("raw").value.trim(); if (!t) return; log("> " + t); if (t === "?") await askStatus(); else if (t === "!") await writeRaw(t); else { const r = await cmd(t); if (r === "ok" || r.startsWith("error: нет") || r.startsWith("error: стоп")) log(r); } };
+$("raw").addEventListener("keydown", e => { if (e.key === "Enter") $("send").click(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && port) $("stop").click(); });
+</script>
+</body>
+</html>

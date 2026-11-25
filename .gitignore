@@ -1,0 +1,33 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VS Code: локальные файлы, которые PlatformIO создаёт сам
+.vscode/*
+!.vscode/extensions.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Altium Designer: история, превью, логи, кэш
+History/
+__Previews/
+Project Logs for */
+Project Outputs for */
+*.PrjPcbStructure
+*.SchDocPreview
+*.PcbDocPreview
+*.LOG
+*.bak
+~$*
+
+# ОС и редакторы
+Thumbs.db
+desktop.ini
+.DS_Store
+*.tmp
+*.swp

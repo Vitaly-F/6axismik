@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Плоттер — плата 6 осей</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1d2129;--muted:#6b7280;--line:#e3e5e9;--acc:#2563eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--btn:#eef1f5;--paper:#ffffff;--ink:#1d4ed8;--trav:#9ca3af}
+@media (prefers-color-scheme:dark){:root{--bg:#15171b;--card:#1e2126;--text:#e7e9ee;--muted:#9aa2ae;--line:#2c3036;--acc:#4f8bff;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--btn:#2a2e35;--paper:#f3f4f6;--ink:#1d4ed8;--trav:#9ca3af}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,Segoe UI,Arial,sans-serif}
+main{max-width:900px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 12px}
+h2{font-size:16px;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button{font:inherit;border:1px solid var(--line);background:var(--btn);color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.stop{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:700;padding:10px 22px}
+select,input[type=number]{font:inherit;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+input[type=number]{width:80px}
+label{color:var(--muted)}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-weight:600;font-size:13px;background:var(--btn)}
+.pill.Off{color:var(--muted)} .pill.Idle{color:var(--ok)} .pill.Run{color:var(--acc)} .pill.Alarm{color:#fff;background:var(--bad)}
+#status{font-family:ui-monospace,Consolas,monospace;font-size:13px}
+#alarm{display:none;background:var(--bad);color:#fff;border-radius:8px;padding:8px 12px;margin-top:8px}
+table{border-collapse:collapse}
+td{padding:4px 8px 4px 0}
+.hint{color:var(--muted);font-size:13px}
+ol.steps{margin:4px 0 0;padding-left:20px}
+#log{height:110px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted);white-space:pre-wrap}
+canvas{width:100%;height:380px;background:var(--bg);border:1px solid var(--line);border-radius:8px;display:block}
+.stats{font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.grid2{display:grid;grid-template-columns:auto auto auto auto auto;gap:6px 6px;align-items:center;justify-content:start}
+.prog{height:10px;background:var(--btn);border-radius:6px;overflow:hidden;flex:1;min-width:160px}
+.prog>div{height:100%;width:0;background:var(--acc)}
+#svgHost{position:absolute;left:-20000px;top:0;width:1000px;height:1000px;overflow:hidden;opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Плоттер: рисунок ручкой на листе</h1>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect" class="primary">Подключиться</button>
+      <button id="en" class="need" disabled>Включить драйверы (E)</button>
+      <button id="dis" class="need" disabled>Выключить (D)</button>
+      <button id="clr" class="need" disabled>Сброс аварии (X)</button>
+      <span style="flex:1"></span>
+      <button id="stop" class="stop need" disabled>СТОП</button>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="pill Off" id="mode">нет связи</span><span id="status"></span></div>
+    <div id="alarm"></div>
+  </div>
+
+  <div class="card">
+    <h2>Порядок</h2>
+    <ol class="hint steps">
+      <li>Назначьте моторам роли: «X листа» — ось, что ведёт перо влево-вправо, «Y листа» — стол, «Перо (Z)» — <b>оба мотора Z</b>.</li>
+      <li>Загрузите SVG и задайте ширину рисунка в мм.</li>
+      <li>Кнопками ниже подведите перо к <b>левому нижнему углу</b> будущего рисунка, на 3–5 мм над листом. Нажмите «Начало здесь».</li>
+      <li>Опускайте Z по 1 / 0,2 мм, пока перо не коснётся листа, и нажмите «Касание здесь» (или впишите глубину сами). Перо само поднимется.</li>
+      <li>«Обвести габарит» — перо пройдёт по рамке рисунка над листом. Потом «▶ Рисовать».</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Моторы</h2>
+    <div class="row">
+      <label>Шагов на оборот
+        <select id="spr">
+          <option value="3200" selected>3200 — 1/16</option>
+          <option value="1600">1600 — 1/8</option>
+          <option value="800">800 — 1/4</option>
+          <option value="400">400 — 1/2</option>
+          <option value="200">200 — полный шаг</option>
+        </select></label>
+    </div>
+    <table id="roles" style="margin-top:6px"></table>
+    <div class="row" style="margin-top:6px">
+      <label>X листа, мм/об <input id="mmX" type="number" value="40" min="0.1" step="0.1"></label>
+      <label>Y листа, мм/об <input id="mmY" type="number" value="40" min="0.1" step="0.1"></label>
+      <label>Перо, мм/об <input id="mmZ" type="number" value="8" min="0.1" step="0.1"></label>
+    </div>
+    <div class="hint">Ремень GT2 + шкив 20 зубьев — 40; винт T8 — 8. Проверьте направление: «X +» — перо вправо по листу, «Y +» — от вас по листу (если едет стол — стол к вам), «Z +» — вверх. Не так — «инверт».<br>
+      <b>Два мотора Z:</b> обоим роль «Перо (Z)». Сначала нажмите «Z ↑ 1» и смотрите на оба винта: портал должен подняться ровно. Если один мотор крутится навстречу — сразу СТОП (Esc) и отметьте ему «инверт», иначе портал перекосит.</div>
+  </div>
+
+  <div class="card">
+    <h2>Рисунок</h2>
+    <div class="row">
+      <input type="file" id="file" accept=".svg,image/svg+xml">
+      <label>Ширина, мм <input id="W" type="number" value="60" min="5" max="300" step="1"></label>
+      <span class="hint" id="Hinfo"></span>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label><input type="checkbox" id="outline" checked> контуры</label>
+      <label><input type="checkbox" id="hatch"> заливка штриховкой</label>
+      <label>шаг штриховки, мм <input id="hstep" type="number" value="0.8" min="0.3" max="5" step="0.1"></label>
+      <label><input type="checkbox" id="skipWhite" checked> не рисовать белые фигуры</label>
+    </div>
+    <div class="hint" style="margin-top:4px">Нужен SVG с кривыми. Текст и клоны (&lt;use&gt;) переведите в кривые: в Inkscape «Контур → Оконтурить объект». Растровую картинку (PNG/JPG) сначала векторизуйте: Inkscape «Контур → Векторизовать растр».</div>
+    <canvas id="cv" style="margin-top:8px"></canvas>
+    <div class="stats" id="stats" style="margin-top:6px">Файл не загружен</div>
+  </div>
+
+  <div class="card">
+    <h2>Перо и скорость</h2>
+    <div class="row">
+      <label>Рисовать, мм/с <input id="vDraw" type="number" value="10" min="1" max="60" step="1"></label>
+      <label>Переезды, мм/с <input id="vTrav" type="number" value="25" min="1" max="100" step="1"></label>
+      <label>Перо вверх-вниз, мм/с <input id="vZ" type="number" value="5" min="0.5" max="20" step="0.5"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Опустить до касания, мм <input id="touch" type="number" value="3" min="0.1" max="30" step="0.1"></label>
+      <label>Дожим, мм <input id="press" type="number" value="0.3" min="0" max="3" step="0.1"></label>
+      <span class="hint">перо внизу = начало − касание − дожим</span>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <b>X</b><button class="need jg" data-r="X" data-d="-10">−10</button><button class="need jg" data-r="X" data-d="-1">−1</button><button class="need jg" data-r="X" data-d="1">+1</button><button class="need jg" data-r="X" data-d="10">+10</button>
+      <b>Y</b><button class="need jg" data-r="Y" data-d="-10">−10</button><button class="need jg" data-r="Y" data-d="-1">−1</button><button class="need jg" data-r="Y" data-d="1">+1</button><button class="need jg" data-r="Y" data-d="10">+10</button>
+      <b>Z</b><button class="need jg" data-r="Z" data-d="5">↑ 5</button><button class="need jg" data-r="Z" data-d="1">↑ 1</button><button class="need jg" data-r="Z" data-d="-1">↓ 1</button><button class="need jg" data-r="Z" data-d="-0.2">↓ 0,2</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="need" id="bOrigin">Начало здесь</button>
+      <button class="need" id="bTouch">Касание здесь</button>
+      <button class="need" id="bTest">Пробное касание</button>
+      <span class="hint" id="originInfo">Начало не задано</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button class="need" id="bFrame">Обвести габарит</button>
+      <button class="need primary" id="bDraw">▶ Рисовать</button>
+      <button class="need" id="bHome">Поднять перо и в начало</button>
+      <div class="prog"><div id="progBar"></div></div><span class="stats" id="progTxt"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:6px"><b>Журнал</b></div>
+    <div id="log"></div>
+  </div>
+  <div class="hint">Работает в Chrome или Edge. Монитор VS Code и пульт перед подключением закройте — COM-порт может занимать одна программа. Esc — стоп.</div>
+</main>
+<div id="svgHost"></div>
+
+<script>
+// ===================== связь с платой (как в пульте) =====================
+const DT = 50, MAX_INFLIGHT = 220;
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let port, reader, writer, buf = "", waiters = [], busy = false, poll = null, lastPos = [0,0,0,0,0,0], stopUntil = 0;
+const qTimes = [], rtts = [];
+
+function log(s){ const L = $("log"); L.textContent += s + "\n"; L.scrollTop = L.scrollHeight; }
+function setConnected(on){
+  for (const b of document.querySelectorAll("button.need")) b.disabled = !on;
+  $("connect").textContent = on ? "Отключиться" : "Подключиться";
+}
+function askStatus(){ qTimes.push(performance.now()); if (qTimes.length > 20) qTimes.shift(); return writeRaw("?"); }
+async function connect(){
+  if (!("serial" in navigator)) { alert("Браузер не поддерживает Web Serial. Откройте страницу в Chrome или Edge."); return; }
+  if (port) { await disconnect(); return; }
+  try { port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200 }); }
+  catch (e) { log("Не удалось открыть порт: " + e.message); port = null; return; }
+  writer = port.writable.getWriter();
+  setConnected(true); origin = null; showOrigin();
+  log("Подключено.");
+  readLoop();
+  let lastPoll = 0;
+  poll = setInterval(() => { const now = performance.now(); if (port && now - lastPoll >= (busy ? 1000 : 400)) { lastPoll = now; askStatus(); } }, 100);
+}
+async function disconnect(){
+  clearInterval(poll); poll = null;
+  try { await writeRaw("D\n"); } catch (e) {}
+  try { reader && await reader.cancel(); } catch (e) {}
+  try { writer && writer.releaseLock(); } catch (e) {}
+  try { await port.close(); } catch (e) {}
+  port = null; setConnected(false);
+  $("mode").className = "pill Off"; $("mode").textContent = "нет связи"; $("status").textContent = "";
+  log("Отключено.");
+}
+async function writeRaw(s){ if (writer) await writer.write(new TextEncoder().encode(s)); }
+async function readLoop(){
+  const dec = new TextDecoder();
+  while (port && port.readable) {
+    reader = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value);
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) onLine(line); }
+        const s = buf.indexOf("<"), e = buf.indexOf(">", s);
+        if (s >= 0 && e > s) { onStatus(buf.slice(s, e + 1)); buf = buf.slice(0, s) + buf.slice(e + 1); }
+      }
+    } catch (e) { log("Ошибка чтения: " + e.message); break; }
+    finally { reader.releaseLock(); }
+  }
+}
+function onLine(line){
+  const s = line.indexOf("<");
+  if (s >= 0 && line.indexOf(">", s) > s) { onStatus(line.slice(s, line.indexOf(">", s) + 1)); line = (line.slice(0, s) + line.slice(line.indexOf(">", s) + 1)).trim(); if (!line) return; }
+  if (line === "ok" || line.startsWith("error")) {
+    if (performance.now() < stopUntil) return;
+    const w = waiters.shift(); if (w) w(line); if (line.startsWith("error")) log(line); return;
+  }
+  if (line === "HALT") return;
+  if (line.startsWith("ALARM")) { showAlarm(line); log(line); return; }
+  log(line);
+}
+function onStatus(st){
+  if (qTimes.length) { rtts.push(performance.now() - qTimes.shift()); if (rtts.length > 10) rtts.shift(); }
+  const parts = st.slice(1, -1).split("|"), mode = parts[0];
+  const m = $("mode"); m.className = "pill " + mode;
+  m.textContent = { Off: "драйверы выключены", Idle: "стоит", Run: "едет", Alarm: "АВАРИЯ" }[mode] || mode;
+  const kv = {}; for (const p of parts.slice(1)) { const k = p.indexOf(":"); kv[p.slice(0, k)] = p.slice(k + 1); }
+  if (kv.POS) lastPos = kv.POS.split(",").map(Number);
+  const rtt = rtts.length ? ` · ответ платы ~${Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length)} мс` : "";
+  $("status").textContent = `очередь ${kv.Q ?? "-"} · драйверы ${kv.EN === "1" ? "вкл" : "выкл"}${rtt}`;
+  if (mode !== "Alarm") $("alarm").style.display = "none"; else if (kv.ALARM) showAlarm("ALARM: " + kv.ALARM);
+}
+function showAlarm(t){ const a = $("alarm"); a.style.display = "block"; a.textContent = t + " — устраните причину, «Сброс аварии», затем «Включить драйверы»."; }
+function cmd(line, timeout = 15000){
+  return new Promise(resolve => {
+    let done = false; const w = r => { if (!done) { done = true; resolve(r); } };
+    waiters.push(w); writeRaw(line + "\n");
+    setTimeout(() => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); w("error: нет ответа"); }, timeout);
+  });
+}
+// segs: [{ v:[d1..d6], t: мс }]; onProgress(сделано, всего)
+async function runSegs(segs, onProgress){
+  if (busy || !port || performance.now() < stopUntil) return false;
+  busy = true;
+  const inflight = []; let bytes = 0, ok = true, acked = 0;
+  const tick = () => { acked++; if (onProgress && (acked % 10 === 0 || acked === segs.length)) onProgress(acked, segs.length); };
+  try {
+    outer:
+    for (const s of segs) {
+      const line = `M ${s.v.join(" ")} ${s.t}`, len = line.length + 1;
+      while (inflight.length && bytes + len > MAX_INFLIGHT) {
+        const f = inflight.shift(); bytes -= f.len;
+        const r = await f.p; tick();
+        if (r !== "ok") { if (busy) log(`Остановлено: ${r}`); ok = false; busy = false; break outer; }
+      }
+      if (!busy) { ok = false; break; }
+      inflight.push({ p: cmd(line), len }); bytes += len;
+    }
+    for (const f of inflight) { const r = await f.p; tick(); if (r !== "ok" && ok) { if (busy) log(`Остановлено: ${r}`); ok = false; } }
+  } finally { busy = false; }
+  return ok;
+}
+async function freshPos(){ await askStatus(); await sleep(400); return lastPos.slice(); }
+
+// ===================== настройки =====================
+const rt = $("roles");
+for (let a = 1; a <= 6; a++) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><b>Ось ${a}</b></td><td><select id="role${a}"><option value="">— не участвует</option>
+    <option value="X">X листа</option><option value="Y">Y листа</option><option value="Z">Перо (Z)</option></select></td>
+    <td><label><input type="checkbox" id="inv${a}"> инверт</label></td>`;
+  rt.appendChild(tr);
+}
+const SAVE = ["spr","mmX","mmY","mmZ","W","outline","hatch","hstep","skipWhite","vDraw","vTrav","vZ","touch","press"]
+  .concat([1,2,3,4,5,6].flatMap(a => ["role" + a, "inv" + a]));
+function saveCfg(){ try { const o = {}; for (const id of SAVE) { const e = $(id); o[id] = e.type === "checkbox" ? e.checked : e.value; } localStorage.setItem("plot6", JSON.stringify(o)); } catch (e) {} }
+function loadCfg(){ try { const o = JSON.parse(localStorage.getItem("plot6") || "{}"); for (const id in o) { const e = $(id); if (!e) continue; if (e.type === "checkbox") e.checked = !!o[id]; else e.value = o[id]; } } catch (e) {} }
+const num = (id, lo, hi, d) => { const v = +$(id).value; return isFinite(v) && v > 0 ? Math.min(hi, Math.max(lo, v)) : d; };
+function cfg(){
+  const spr = +$("spr").value, mm = { X: +$("mmX").value, Y: +$("mmY").value, Z: +$("mmZ").value };
+  const spm = {}; for (const r of ["X","Y","Z"]) spm[r] = mm[r] > 0 ? spr / mm[r] : 0;
+  return {
+    spm, map: [1,2,3,4,5,6].map(a => ({ role: $("role" + a).value, sign: $("inv" + a).checked ? -1 : 1 })),
+    vDraw: num("vDraw", 1, 60, 10), vTrav: num("vTrav", 1, 100, 25), vZ: num("vZ", 0.5, 20, 5),
+    down: num("touch", 0.1, 30, 3) + Math.max(0, +$("press").value || 0)
+  };
+}
+const used = (c, r) => c.map.some(m => m.role === r);
+function rolesOk(c){
+  for (const r of ["X","Y","Z"]) {
+    if (!used(c, r)) { log(`Назначьте мотор с ролью «${r === "Z" ? "Перо (Z)" : r + " листа"}».`); return false; }
+    if (!(c.spm[r] > 0)) { log(`Укажите мм за оборот для ${r}.`); return false; }
+  }
+  return true;
+}
+
+// ===================== разбор SVG =====================
+let model = null;   // { strokes: [[{x,y}...]...] в мм, W, H }
+let svgRoot = null;
+
+function readPathTokens(d){
+  // токены: буквы команд и числа; флаги дуг читаем отдельно (они могут идти слитно: "a1 1 0 011 1")
+  const out = []; let i = 0; const n = d.length;
+  const numRe = /[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/y;
+  let cmdLetter = null, argIdx = 0;
+  while (i < n) {
+    const ch = d[i];
+    if (/[\s,]/.test(ch)) { i++; continue; }
+    if (/[MmZzLlHhVvCcSsQqTtAa]/.test(ch)) { out.push(ch); cmdLetter = ch; argIdx = 0; i++; continue; }
+    if ((cmdLetter === "A" || cmdLetter === "a") && (argIdx % 7 === 3 || argIdx % 7 === 4) && (ch === "0" || ch === "1")) {
+      out.push(+ch); argIdx++; i++; continue;
+    }
+    numRe.lastIndex = i;
+    const m = numRe.exec(d);
+    if (!m) { i++; continue; }
+    out.push(parseFloat(m[0])); argIdx++; i = numRe.lastIndex;
+  }
+  return out;
+}
+const NARGS = { M:2, L:2, H:1, V:1, C:6, S:4, Q:4, T:2, A:7, Z:0 };
+// делим path на подконтуры, каждый начинается с абсолютного M
+function splitSubpaths(d){
+  const tk = readPathTokens(d);
+  const subs = []; let cur = null;
+  let cx = 0, cy = 0, sx = 0, sy = 0, i = 0, cmd = null;
+  while (i < tk.length) {
+    if (typeof tk[i] === "string") { cmd = tk[i++]; }
+    else if (!cmd) { i++; continue; }
+    const U = cmd.toUpperCase(), rel = cmd !== U, na = NARGS[U];
+    if (U === "Z") { if (cur) cur.push("Z"); cx = sx; cy = sy; cmd = null; continue; }
+    if (tk.length - i < na || typeof tk[i] === "string") { if (na) { i++; } continue; }
+    const a = tk.slice(i, i + na); i += na;
+    if (U === "M") {
+      const x = rel ? cx + a[0] : a[0], y = rel ? cy + a[1] : a[1];
+      cur = [`M ${x} ${y}`]; subs.push(cur); cx = sx = x; cy = sy = y;
+      cmd = rel ? "l" : "L";               // следующие пары — линии
+      continue;
+    }
+    if (!cur) { cur = [`M ${cx} ${cy}`]; subs.push(cur); sx = cx; sy = cy; }
+    cur.push(cmd + " " + a.join(" "));
+    if (U === "H") cx = rel ? cx + a[0] : a[0];
+    else if (U === "V") cy = rel ? cy + a[0] : a[0];
+    else { const ex = a[na - 2], ey = a[na - 1]; cx = rel ? cx + ex : ex; cy = rel ? cy + ey : ey; }
+  }
+  return subs.map(s => ({ d: s.join(" "), closed: s[s.length - 1] === "Z" }));
+}
+function shapeToD(el){
+  const t = el.tagName.toLowerCase(), v = a => el[a] && el[a].baseVal ? el[a].baseVal.value : 0;
+  if (t === "path") return el.getAttribute("d") || "";
+  if (t === "rect") {
+    const x = v("x"), y = v("y"), w = v("width"), h = v("height");
+    let rx = v("rx"), ry = v("ry"); if (!rx && ry) rx = ry; if (!ry && rx) ry = rx;
+    rx = Math.min(rx, w / 2); ry = Math.min(ry, h / 2);
+    if (!rx) return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`;
+    return `M ${x + rx} ${y} H ${x + w - rx} A ${rx} ${ry} 0 0 1 ${x + w} ${y + ry} V ${y + h - ry} A ${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h} H ${x + rx} A ${rx} ${ry} 0 0 1 ${x} ${y + h - ry} V ${y + ry} A ${rx} ${ry} 0 0 1 ${x + rx} ${y} Z`;
+  }
+  if (t === "circle" || t === "ellipse") {
+    const cx = v("cx"), cy = v("cy"), rx = t === "circle" ? v("r") : v("rx"), ry = t === "circle" ? v("r") : v("ry");
+    return `M ${cx - rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`;
+  }
+  if (t === "line") return `M ${v("x1")} ${v("y1")} L ${v("x2")} ${v("y2")}`;
+  if (t === "polyline" || t === "polygon") {
+    const pts = [...el.points].map(p => `${p.x} ${p.y}`);
+    if (!pts.length) return "";
+    return "M " + pts.join(" L ") + (t === "polygon" ? " Z" : "");
+  }
+  return "";
+}
+function isWhite(c){
+  const m = /rgba?\(([^)]+)\)/.exec(c || ""); if (!m) return false;
+  const p = m[1].split(",").map(s => parseFloat(s));
+  return p[0] >= 245 && p[1] >= 245 && p[2] >= 245;
+}
+
+async function loadSvgText(text){
+  const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.nodeName.toLowerCase() !== "svg" || doc.getElementsByTagName("parsererror").length) throw new Error("это не SVG");
+  root.querySelectorAll("script, foreignObject").forEach(n => n.remove());
+  for (const el of root.querySelectorAll("*")) for (const at of [...el.attributes]) if (/^on/i.test(at.name)) el.removeAttribute(at.name);
+  const host = $("svgHost"); host.innerHTML = "";
+  svgRoot = document.importNode(root, true);
+  svgRoot.setAttribute("width", "1000"); svgRoot.setAttribute("height", "1000");
+  host.appendChild(svgRoot);
+  rebuild();
+}
+
+// собрать контуры в координатах окна SVG (до масштаба)
+function collect(){
+  const els = [...svgRoot.querySelectorAll("path, rect, circle, ellipse, line, polyline, polygon")]
+    .filter(el => !el.closest("defs, clipPath, mask, symbol, pattern, marker"));
+  const unsupported = svgRoot.querySelectorAll("text, use, image").length;
+  const tmp = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  svgRoot.appendChild(tmp);
+  const items = []; let elId = 0;
+  for (const el of els) {
+    elId++;
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const hasFill = cs.fill && cs.fill !== "none", hasStroke = cs.stroke && cs.stroke !== "none";
+    if (!hasFill && !hasStroke) continue;
+    const white = (!hasFill || isWhite(cs.fill)) && (!hasStroke || isWhite(cs.stroke));
+    const d = shapeToD(el); if (!d) continue;
+    const ctm = el.getCTM(); if (!ctm) continue;
+    const scale = Math.sqrt(Math.abs(ctm.a * ctm.d - ctm.b * ctm.c)) || 1;
+    for (const sp of splitSubpaths(d)) {
+      tmp.setAttribute("d", sp.d);
+      let L = 0; try { L = tmp.getTotalLength(); } catch (e) { continue; }
+      items.push({ d: sp.d, closed: sp.closed, L, ctm, scale, white, elId, fillable: hasFill && !isWhite(cs.fill) });
+    }
+  }
+  tmp.remove();
+  return { items, unsupported };
+}
+function sample(item, stepUnits, tmp){
+  tmp.setAttribute("d", item.d);
+  const n = Math.max(2, Math.min(20000, Math.ceil(item.L / stepUnits)));
+  const pts = [];
+  for (let k = 0; k <= n; k++) {
+    const p = tmp.getPointAtLength(item.L * k / n);
+    const q = new DOMPoint(p.x, p.y).matrixTransform(item.ctm);
+    pts.push({ x: q.x, y: q.y });
+  }
+  return pts;
+}
+// упрощение ломаной (Рамер — Дуглас — Пекер)
+function rdp(pts, eps){
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const st = [[0, pts.length - 1]];
+  while (st.length) {
+    const [a, b] = st.pop(); const A = pts[a], B = pts[b];
+    const dx = B.x - A.x, dy = B.y - A.y, L2 = dx * dx + dy * dy;
+    let md = -1, mi = -1;
+    for (let i = a + 1; i < b; i++) {
+      const P = pts[i];
+      let dist;
+      if (L2 === 0) dist = Math.hypot(P.x - A.x, P.y - A.y);
+      else { const t = Math.max(0, Math.min(1, ((P.x - A.x) * dx + (P.y - A.y) * dy) / L2)); dist = Math.hypot(P.x - A.x - t * dx, P.y - A.y - t * dy); }
+      if (dist > md) { md = dist; mi = i; }
+    }
+    if (md > eps) { keep[mi] = 1; st.push([a, mi], [mi, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+function thin(pts, minD){
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) { const q = out[out.length - 1]; if (Math.hypot(pts[i].x - q.x, pts[i].y - q.y) >= minD) out.push(pts[i]); }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+function hatchPolys(polys, step){
+  // чётно-нечётная заливка горизонтальными линиями; polys — замкнутые ломаные в мм
+  let y0 = Infinity, y1 = -Infinity;
+  for (const P of polys) for (const p of P) { y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  const lines = []; let flip = false;
+  for (let y = y0 + step / 2; y < y1; y += step) {
+    const xs = [];
+    for (const P of polys) for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length];
+      if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y)) xs.push(a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y));
+    }
+    xs.sort((p, q) => p - q);
+    const segs = [];
+    for (let k = 0; k + 1 < xs.length; k += 2) if (xs[k + 1] - xs[k] > 0.05) segs.push([{ x: xs[k], y }, { x: xs[k + 1], y }]);
+    if (flip) { segs.reverse(); segs.forEach(s => s.reverse()); }
+    lines.push(...segs); flip = !flip;
+  }
+  return lines;
+}
+function orderStrokes(strokes){
+  // жадно: следующий — ближайший к текущему положению пера; открытые можно развернуть, замкнутые — начать с ближайшей точки
+  const left = strokes.slice(), out = []; let cur = { x: 0, y: 0 };
+  while (left.length) {
+    let best = -1, bd = Infinity, rev = false, rot = 0;
+    for (let i = 0; i < left.length; i++) {
+      const s = left[i], a = s.pts[0], b = s.pts[s.pts.length - 1];
+      if (s.closed && s.pts.length > 3) {
+        for (let k = 0; k < s.pts.length - 1; k += Math.max(1, Math.floor(s.pts.length / 64))) {
+          const d = Math.hypot(s.pts[k].x - cur.x, s.pts[k].y - cur.y); if (d < bd) { bd = d; best = i; rev = false; rot = k; }
+        }
+      } else {
+        const da = Math.hypot(a.x - cur.x, a.y - cur.y), db = Math.hypot(b.x - cur.x, b.y - cur.y);
+        if (da < bd) { bd = da; best = i; rev = false; rot = 0; }
+        if (db < bd) { bd = db; best = i; rev = true; rot = 0; }
+      }
+    }
+    const s = left.splice(best, 1)[0];
+    let p = s.pts;
+    if (s.closed && rot) { const body = p.slice(0, -1); p = body.slice(rot).concat(body.slice(0, rot)); p.push(p[0]); }
+    if (rev) p = p.slice().reverse();
+    out.push(p); cur = p[p.length - 1];
+  }
+  return out;
+}
+
+function rebuild(){
+  if (!svgRoot) return;
+  const W = num("W", 5, 300, 60);
+  const { items, unsupported } = collect();
+  if (!items.length) { model = null; $("stats").textContent = "В SVG не нашлось фигур для рисования."; draw(); return; }
+  // 1) грубо — габарит; 2) точно — с шагом ~0,1 мм на бумаге
+  const tmp = document.createElementNS("http://www.w3.org/2000/svg", "path"); svgRoot.appendChild(tmp);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const skipW = $("skipWhite").checked;
+  const act = items.filter(it => !(skipW && it.white));
+  for (const it of act) for (const p of sample(it, it.L / 64, tmp)) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  if (!(x1 > x0)) { tmp.remove(); model = null; $("stats").textContent = "Пустой рисунок."; draw(); return; }
+  const s = W / (x1 - x0), H = (y1 - y0) * s;
+  const strokes = [];
+  for (const it of act) {
+    const raw = sample(it, 0.1 / (s * it.scale), tmp).map(p => ({ x: (p.x - x0) * s, y: (y1 - p.y) * s }));
+    let pts = thin(rdp(raw, 0.03), 0.2);
+    const closed = it.closed || Math.hypot(raw[0].x - raw[raw.length - 1].x, raw[0].y - raw[raw.length - 1].y) < 0.05;
+    if (closed && (pts[0].x !== pts[pts.length - 1].x || pts[0].y !== pts[pts.length - 1].y)) pts.push({ ...pts[0] });
+    if ($("outline").checked) strokes.push({ pts, closed });
+  }
+  tmp.remove();
+  // штриховка: по каждой фигуре отдельно (её подконтуры вместе — дырки остаются пустыми)
+  if ($("hatch").checked) {
+    const groups = groupFill(act, x0, y1, s);
+    const st = num("hstep", 0.3, 5, 0.8);
+    for (const polys of groups) for (const seg of hatchPolys(polys, st)) strokes.push({ pts: seg, closed: false });
+  }
+  const ordered = orderStrokes(strokes.filter(t => t.pts.length >= 2));
+  model = { strokes: ordered, W, H };
+  $("Hinfo").textContent = `высота ${H.toFixed(1)} мм`;
+  const drawLen = ordered.reduce((a, p) => a + polyLen(p), 0);
+  let trav = 0, cur = { x: 0, y: 0 }; for (const p of ordered) { trav += Math.hypot(p[0].x - cur.x, p[0].y - cur.y); cur = p[p.length - 1]; }
+  const c = cfg();
+  const tEst = drawLen / c.vDraw + trav / c.vTrav + ordered.length * (2 * c.down / c.vZ + 0.15);
+  $("stats").textContent = `${W.toFixed(0)} × ${H.toFixed(1)} мм · штрихов ${ordered.length} · рисовать ${(drawLen / 1000).toFixed(2)} м · переезды ${(trav / 1000).toFixed(2)} м · ≈ ${fmtTime(tEst)}` +
+    (unsupported ? ` · пропущено элементов text/use/image: ${unsupported}` : "");
+  draw();
+}
+function groupFill(act, x0, y1, s){
+  // одна группа = подконтуры одного элемента SVG (у них общий ctm и общий исходный элемент)
+  const groups = []; let curKey = null, cur = null;
+  const tmp = document.createElementNS("http://www.w3.org/2000/svg", "path"); svgRoot.appendChild(tmp);
+  for (const it of act) {
+    if (!it.fillable || !it.closed) continue;
+    const key = it.elId;
+    if (key !== curKey) { cur = []; groups.push(cur); curKey = key; }
+    cur.push(rdp(sample(it, 0.2 / (s * it.scale), tmp).map(p => ({ x: (p.x - x0) * s, y: (y1 - p.y) * s })), 0.03));
+  }
+  tmp.remove();
+  return groups;
+}
+const polyLen = p => { let L = 0; for (let i = 1; i < p.length; i++) L += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y); return L; };
+const fmtTime = t => t < 60 ? `${Math.round(t)} с` : `${Math.floor(t / 60)} мин ${Math.round(t % 60)} с`;
+
+// ===================== предпросмотр =====================
+function draw(){
+  const cv = $("cv"), dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  if (!model) { g.fillStyle = css.getPropertyValue("--muted"); g.font = "14px system-ui"; g.fillText("Загрузите SVG", 16, 28); return; }
+  const pad = 24, k = Math.min((w - 2 * pad) / model.W, (h - 2 * pad) / model.H);
+  const ox = (w - model.W * k) / 2, oy = (h + model.H * k) / 2;
+  const X = x => ox + x * k, Y = y => oy - y * k;
+  g.fillStyle = css.getPropertyValue("--paper"); g.fillRect(X(0) - 8, Y(model.H) - 8, model.W * k + 16, model.H * k + 16);
+  g.strokeStyle = "#cbd5e1"; g.setLineDash([4, 4]); g.strokeRect(X(0), Y(model.H), model.W * k, model.H * k);
+  // переезды
+  g.strokeStyle = css.getPropertyValue("--trav"); g.lineWidth = 0.7; g.beginPath();
+  let cur = { x: 0, y: 0 };
+  for (const p of model.strokes) { g.moveTo(X(cur.x), Y(cur.y)); g.lineTo(X(p[0].x), Y(p[0].y)); cur = p[p.length - 1]; }
+  g.stroke(); g.setLineDash([]);
+  // штрихи
+  g.strokeStyle = css.getPropertyValue("--ink"); g.lineWidth = 1.2; g.lineJoin = "round"; g.beginPath();
+  for (const p of model.strokes) { g.moveTo(X(p[0].x), Y(p[0].y)); for (let i = 1; i < p.length; i++) g.lineTo(X(p[i].x), Y(p[i].y)); }
+  g.stroke();
+  // начало
+  g.fillStyle = "#dc2626"; g.beginPath(); g.arc(X(0), Y(0), 4, 0, 7); g.fill();
+  g.fillStyle = css.getPropertyValue("--muted"); g.font = "12px system-ui";
+  g.fillText("начало", X(0) + 6, Y(0) + 14);
+  g.fillText(`${model.W.toFixed(0)} мм`, X(model.W / 2) - 16, Y(0) + 16);
+}
+
+// ===================== траектория -> команды M =====================
+let origin = null;   // положения осей (шаги) в точке «Начало здесь», перо поднято
+function showOrigin(){ $("originInfo").textContent = origin ? `Начало: ${origin.join(", ")}` : "Начало не задано"; }
+
+class Planner {
+  constructor(c){ this.c = c; this.p = { X: 0, Y: 0, Z: 0 }; this.prev = [0,0,0,0,0,0]; this.segs = []; }
+  steps(p){ return this.c.map.map(m => m.role ? Math.round(p[m.role] * this.c.spm[m.role]) * m.sign : 0); }
+  emit(p, ms){
+    const t = this.steps(p), v = t.map((x, i) => x - this.prev[i]);
+    this.prev = t; this.p = { ...p };
+    this.segs.push({ v, t: Math.max(1, Math.round(ms)) });
+  }
+  pause(ms){ this.segs.push({ v: [0,0,0,0,0,0], t: Math.max(1, Math.round(ms)) }); }
+  // прямой ход с разгоном (переезды, перо)
+  move(to, v, a){
+    const from = { ...this.p }, L = Math.hypot(to.X - from.X, to.Y - from.Y, to.Z - from.Z);
+    if (L < 1e-6) return;
+    let ta = v / a, sa = 0.5 * a * ta * ta, vpk = v, tc;
+    if (2 * sa > L) { ta = Math.sqrt(L / a); vpk = a * ta; sa = L / 2; tc = 0; } else tc = (L - 2 * sa) / v;
+    const T = 2 * ta + tc, dt = DT / 1000;
+    const pos = t => t < ta ? 0.5 * a * t * t : t < ta + tc ? sa + vpk * (t - ta) : t < T ? L - 0.5 * a * (T - t) ** 2 : L;
+    const n = Math.max(1, Math.ceil(T / dt));
+    let tp = 0;
+    for (let i = 1; i <= n; i++) {
+      const t = Math.min(i * dt, T), f = pos(t) / L;
+      this.emit({ X: from.X + (to.X - from.X) * f, Y: from.Y + (to.Y - from.Y) * f, Z: from.Z + (to.Z - from.Z) * f }, (t - tp) * 1000);
+      tp = t;
+    }
+  }
+  // рисование: постоянная скорость, вершины ломаной — точно на границах отрезков
+  line(pts, v){
+    const maxLen = v * DT / 1000;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], L = Math.hypot(b.x - a.x, b.y - a.y);
+      if (L < 1e-6) continue;
+      const n = Math.max(1, Math.ceil(L / maxLen));
+      for (let k = 1; k <= n; k++) this.emit({ X: a.x + (b.x - a.x) * k / n, Y: a.y + (b.y - a.y) * k / n, Z: this.p.Z }, L / n / v * 1000);
+    }
+  }
+}
+function rateOk(segs){
+  for (const s of segs) for (let i = 0; i < 6; i++) if (Math.abs(s.v[i]) > s.t * 25 * 0.9) {
+    log(`Слишком быстро для оси ${i + 1}: ${Math.abs(s.v[i])} шагов за ${s.t} мс. Уменьшите скорость.`); return false; }
+  return true;
+}
+// из текущего положения (по счётчикам платы) — сначала перо вверх, потом в начало
+function homeSegs(c, cur){
+  const off = cur.map((p, i) => p - origin[i]);
+  const mm = r => { const i = c.map.findIndex(m => m.role === r); return i < 0 ? 0 : off[i] * c.map[i].sign / c.spm[r]; };
+  const P = new Planner(c);
+  P.p = { X: mm("X"), Y: mm("Y"), Z: mm("Z") }; P.prev = off.map((x, i) => c.map[i].role ? x : 0);
+  if (P.p.Z < 0) P.move({ ...P.p, Z: 0 }, c.vZ, 50);
+  P.move({ X: 0, Y: 0, Z: P.p.Z < 0 ? 0 : P.p.Z }, c.vTrav, 100);
+  if (P.p.Z > 0) P.move({ X: 0, Y: 0, Z: 0 }, c.vZ, 50);
+  return P.segs;
+}
+function ready(needModel = true){
+  const c = cfg();
+  if (!rolesOk(c)) return null;
+  if (!origin) { log("Сначала подведите перо к левому нижнему углу над листом и нажмите «Начало здесь»."); return null; }
+  if (needModel && !model) { log("Загрузите SVG."); return null; }
+  return c;
+}
+function setProg(done, total){ const p = total ? done / total : 0; $("progBar").style.width = (p * 100).toFixed(1) + "%"; $("progTxt").textContent = total ? `${Math.round(p * 100)} %` : ""; }
+
+async function doFrame(){
+  const c = ready(); if (!c) return;
+  const segs = homeSegs(c, await freshPos());
+  const P = new Planner(c);
+  for (const q of [[model.W, 0], [model.W, model.H], [0, model.H], [0, 0]]) { P.move({ X: q[0], Y: q[1], Z: 0 }, c.vTrav * 0.5, 100); P.pause(300); }
+  segs.push(...P.segs);
+  if (!rateOk(segs)) return;
+  log(`Габарит ${model.W.toFixed(0)} × ${model.H.toFixed(1)} мм, перо поднято. Esc — стоп.`);
+  await runSegs(segs, setProg);
+}
+async function doDraw(){
+  const c = ready(); if (!c) return;
+  const segs = homeSegs(c, await freshPos());
+  const P = new Planner(c);
+  for (const p of model.strokes) {
+    P.move({ X: p[0].x, Y: p[0].y, Z: 0 }, c.vTrav, 150);
+    P.move({ X: p[0].x, Y: p[0].y, Z: -c.down }, c.vZ, 50);
+    P.pause(80);
+    P.line(p, c.vDraw);
+    P.move({ ...P.p, Z: 0 }, c.vZ, 50);
+  }
+  P.move({ X: 0, Y: 0, Z: 0 }, c.vTrav, 150);
+  segs.push(...P.segs);
+  if (!rateOk(segs)) return;
+  const T = segs.reduce((a, s) => a + s.t, 0) / 1000;
+  log(`Рисую: ${model.strokes.length} штрихов, ${segs.length} команд, ≈ ${fmtTime(T)}. Esc — стоп, потом «Поднять перо и в начало».`);
+  setProg(0, segs.length);
+  const ok = await runSegs(segs, setProg);
+  log(ok ? "Готово." : "Остановлено.");
+}
+async function doHome(){
+  const c = ready(false); if (!c) return;
+  const segs = homeSegs(c, await freshPos());
+  if (!segs.length) { log("Уже в начале, перо поднято."); return; }
+  if (rateOk(segs)) await runSegs(segs);
+}
+async function jogMm(role, d){
+  const c = cfg(); if (!used(c, role) || !(c.spm[role] > 0)) { log(`Нет мотора с ролью ${role} или не задано мм/об.`); return; }
+  const P = new Planner(c); const to = { X: 0, Y: 0, Z: 0 }; to[role] = d;
+  P.move(to, role === "Z" ? c.vZ : Math.min(c.vTrav, 15), role === "Z" ? 50 : 100);
+  if (rateOk(P.segs)) await runSegs(P.segs);
+}
+async function testTouch(){
+  const c = ready(false); if (!c) return;
+  const segs = homeSegs(c, await freshPos());
+  const P = new Planner(c);
+  P.move({ X: 0, Y: 0, Z: -c.down }, c.vZ, 50); P.pause(1000); P.move({ X: 0, Y: 0, Z: 0 }, c.vZ, 50);
+  segs.push(...P.segs);
+  log(`Пробное касание: вниз на ${c.down.toFixed(1)} мм и обратно.`);
+  if (rateOk(segs)) await runSegs(segs);
+}
+
+// ===================== кнопки =====================
+loadCfg();
+$("connect").onclick = connect;
+$("en").onclick = async () => { const r = await cmd("E"); if (r !== "ok") log(r.includes("E-stop") ? "Нет перемычки/кнопки E-stop на XP8." : r); };
+$("dis").onclick = () => cmd("D");
+$("clr").onclick = () => cmd("X");
+$("stop").onclick = async () => {
+  busy = false; stopUntil = performance.now() + 600;
+  waiters.splice(0).forEach(w => w("error: стоп"));
+  await writeRaw("!"); log("СТОП");
+  for (const ms of [60, 150, 350]) setTimeout(() => writeRaw("!"), ms);
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape" && port) $("stop").click(); });
+for (const b of document.querySelectorAll("button.jg")) b.onclick = () => jogMm(b.dataset.r, +b.dataset.d);
+$("bOrigin").onclick = async () => { if (busy) return; origin = await freshPos(); showOrigin(); log("Начало запомнено (перо поднято, левый нижний угол рисунка)."); };
+$("bTouch").onclick = async () => {
+  if (busy) return;
+  const c = cfg(); if (!origin) { log("Сначала «Начало здесь»."); return; }
+  const cur = await freshPos(), i = c.map.findIndex(m => m.role === "Z");
+  if (i < 0 || !(c.spm.Z > 0)) { log("Нет мотора с ролью «Перо (Z)»."); return; }
+  const h = -(cur[i] - origin[i]) * c.map[i].sign / c.spm.Z;
+  if (!(h > 0.05)) { log("Перо не ниже начала. Опустите Z кнопками ↓ до касания листа."); return; }
+  $("touch").value = h.toFixed(2); saveCfg(); rebuild();
+  log(`Касание: ${h.toFixed(2)} мм ниже начала. Поднимаю перо.`);
+  await doHome();
+};
+$("bTest").onclick = testTouch;
+$("bFrame").onclick = doFrame;
+$("bDraw").onclick = doDraw;
+$("bHome").onclick = doHome;
+$("file").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { await loadSvgText(await f.text()); log(`Загружен ${f.name}.`); } catch (err) { log("Не удалось прочитать SVG: " + err.message); }
+};
+for (const id of SAVE) { const e = $(id); e.addEventListener("change", () => { saveCfg(); if (["W","outline","hatch","hstep","skipWhite","vDraw","vTrav","vZ","touch","press"].includes(id)) rebuild(); }); }
+window.addEventListener("resize", draw);
+draw();
+</script>
+</body>
+</html>
